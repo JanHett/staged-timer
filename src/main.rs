@@ -78,10 +78,10 @@ fn update_display<B: Backend>(
                     }
                 )
                 // .bg(Color::Black)
-                .add_modifier(if i == *current_timer {Modifier::BOLD} else {Modifier::DIM})
+                .add_modifier(Modifier::BOLD)
             )
             .ratio(timer_completion)
-            .label(format!("{}s / {}s", timer.elapsed_s, timer.period_s));
+            .label(format!("{}s / {}s", timer.period_s - timer.elapsed_s, timer.period_s));
             f.render_widget(progr_bar, chunks[i]);
         }
     })?;
@@ -127,16 +127,11 @@ fn parse_cl_args() -> Vec<(String, u32)> {
 }
 
 fn create_timer_list(names_and_times: &[(String, u32)]) -> Vec<Timer> {
-    let mut timers = Vec::new();
-    for (input_n, input_t) in names_and_times {
-        timers.push(
-            Timer {name: input_n.to_string(), period_s: *input_t, elapsed_s: 0}
-        );
-
-        println!("Timer '{input_n}' set for {input_t}s");
-    }
-
-    timers
+    names_and_times.iter().map(
+        |(name, time)| {
+            Timer {name: name.to_string(), period_s: *time, elapsed_s: 0}
+        }
+    ).collect()
 }
 
 fn main() -> Result<(), io::Error> {
