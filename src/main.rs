@@ -39,7 +39,9 @@ fn update_timers(timers: &mut[Timer], current_timer: &mut usize) -> bool {
 fn update_display<B: Backend>(
     terminal: &mut Terminal<B>,
     timers: &[Timer],
-    current_timer: & usize) -> Result<(), io::Error>
+    current_timer: & usize,
+    warning_threshold: u32
+) -> Result<(), io::Error>
 {
     terminal.draw(|f| {
         let num_chunks = timers.len() + (timers.len() % 100);
@@ -68,13 +70,14 @@ fn update_display<B: Backend>(
                 Style::default()
                 .fg(
                     if i == *current_timer {
-                        if timer.period_s - timer.elapsed_s < 10 {
+                        if warning_threshold > 0 
+                        && timer.period_s - timer.elapsed_s <= warning_threshold {
                             Color::Red
                         } else {
                             Color::Green
                         }
                     } else {
-                        Color::White
+                        Color::Rgb(42, 42, 42)
                     }
                 )
                 // .bg(Color::Black)
@@ -89,7 +92,7 @@ fn update_display<B: Backend>(
     Ok(())
 }
 
-fn parse_cl_args() -> Vec<(String, u32)> {
+fn parse_cl_args() -> (Vec<(String, u32)>, u32) {
     let arg_match = App::new("Staged Timer")
         .version("0.1.0")
         .author("Jan Hettenkofer")
@@ -113,17 +116,27 @@ fn parse_cl_args() -> Vec<(String, u32)> {
             .action(clap::ArgAction::Append)
             .required(true)
         )
+        .arg(Arg::with_name("warn")
+            .help("Highlight the countdown bar at N remaining seconds")
+            .long("warn")
+            .short('w')
+            .value_name("N")
+            .takes_value(true)
+            .value_parser(clap::value_parser!(u32))
+            .default_value("0")
+        )
         .get_matches();
 
-    let input_times = arg_match.get_many::<u32>("time").unwrap();
     let input_names = arg_match.get_many::<String>("name").unwrap();
+    let input_times = arg_match.get_many::<u32>("time").unwrap();
+    let input_warn = arg_match.get_one::<u32>("warn").unwrap();
 
     if input_times.len() != input_names.len() {
         println!("Cannot match unequal number of timers and names.");
         std::process::exit(1);
     }
 
-    input_names.into_iter().cloned().zip(input_times.into_iter().cloned()).collect()
+    (input_names.into_iter().cloned().zip(input_times.into_iter().cloned()).collect(), *input_warn)
 }
 
 fn create_timer_list(names_and_times: &[(String, u32)]) -> Vec<Timer> {
@@ -136,7 +149,7 @@ fn create_timer_list(names_and_times: &[(String, u32)]) -> Vec<Timer> {
 
 fn main() -> Result<(), io::Error> {
     // == Data setup ===========================================================
-    let names_and_times = parse_cl_args();
+    let (names_and_times, warn) = parse_cl_args();
 
     let mut current_timer = 0;
     let mut timers = create_timer_list(&names_and_times);
@@ -151,7 +164,7 @@ fn main() -> Result<(), io::Error> {
 
     // == Main loop ============================================================
 
-    update_display(&mut terminal, &mut timers, &current_timer)?;
+    update_display(&mut terminal, &mut timers, &current_timer, warn)?;
 
     let (tick_tx, tick_rx) = channel();
 
@@ -167,7 +180,7 @@ fn main() -> Result<(), io::Error> {
         thread::sleep(Duration::from_millis(50));
         let _ = tick_rx.try_recv().map(|_| {
             keep_running = update_timers(&mut timers, &mut current_timer);
-            keep_running = match update_display(&mut terminal, &mut timers, &current_timer) {
+            keep_running = match update_display(&mut terminal, &mut timers, &current_timer, warn) {
                 Ok(_) => keep_running,
                 Err(_) => false
             };
