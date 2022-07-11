@@ -57,6 +57,7 @@ fn update_display<B: Backend>(
         for (i, timer) in timers.iter().enumerate() {
             // let style = if i == *current_timer { BOLD_GREEN } else { DIM };
             let timer_completion = 1f64 - (timer.period_s - timer.elapsed_s) as f64 / timer.period_s as f64;
+
             let progr_bar = Gauge::default()
             .block(
                 Block::default()
@@ -65,13 +66,23 @@ fn update_display<B: Backend>(
             )
             .gauge_style(
                 Style::default()
-                .fg( if i == *current_timer {Color::Green} else {Color::White} )
+                .fg(
+                    if i == *current_timer {
+                        if timer.period_s - timer.elapsed_s < 10 {
+                            Color::Red
+                        } else {
+                            Color::Green
+                        }
+                    } else {
+                        Color::White
+                    }
+                )
                 // .bg(Color::Black)
                 .add_modifier(if i == *current_timer {Modifier::BOLD} else {Modifier::DIM})
             )
             .ratio(timer_completion)
             .label(format!("{}s / {}s", timer.elapsed_s, timer.period_s));
-           f.render_widget(progr_bar, chunks[i]);
+            f.render_widget(progr_bar, chunks[i]);
         }
     })?;
 
