@@ -7,3 +7,5 @@ edition = "2021"
 
 [dependencies]
 clap = "3.2.8"
+crossterm = "0.24.0"
+tui = "0.18.0"
