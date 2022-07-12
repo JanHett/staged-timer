@@ -1,0 +1,26 @@
+name: Rust
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest, windows-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Build
+      run: cargo build --verbose
+    - name: Run test timer
+      # check if all the time specifications work: just seconds, zero-padded, all-zero positions, ...
+      run: cargo run -- -n Pre-soak -t 61 -n Developer -t 1:01 -n Blix -t 2 -n Wash -t 0:01 -w 0:00:1
