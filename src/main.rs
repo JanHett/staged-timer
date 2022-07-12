@@ -44,14 +44,14 @@ fn update_display<B: Backend>(
 ) -> Result<(), io::Error>
 {
     terminal.draw(|f| {
-        let num_chunks = timers.len() + (timers.len() % 100);
-        let individual_height: u16 = (100 / timers.len()).try_into().unwrap();
+        let num_chunks: u16 = (timers.len() + (100 % timers.len())).try_into().unwrap();
+        let chunk_height: u16 = 100 / num_chunks;
         let chunks = Layout::default()
         .direction(Direction::Vertical)
         .margin(1)
         .constraints(
             (0..num_chunks)
-                .map(|_| Constraint::Percentage(individual_height))
+                .map(|_| Constraint::Percentage(chunk_height))
                 .collect::<Vec<Constraint>>()
         )
         .split(f.size());
