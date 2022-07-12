@@ -8,25 +8,45 @@ use tui::{
     Terminal
 };
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture},
+    event::{read as read_event, poll as poll_event, Event as InputEvent, KeyEvent, KeyModifiers, KeyCode, DisableMouseCapture, EnableMouseCapture},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 
 extern crate clap;
 use clap::{Arg, App};
-struct Timer {
+
+const GREY:Color = Color::Rgb(42, 42, 42);
+const MUSTARD_YELLOW:Color = Color::Rgb(0xff, 0xe5, 0);
+
+struct TimerStage {
     name: String,
     period_s: u32,
     elapsed_s: u32
 }
 
-fn update_timers(timers: &mut[Timer], current_timer: &mut usize) -> bool {
-    if *current_timer >= timers.len() {
+struct Timer {
+    stages: Vec<TimerStage>,
+    current_timer: usize,
+    paused: bool
+}
+
+fn update_state(timer: &mut Timer) -> bool {
+    let Timer{
+        stages,
+        current_timer,
+        paused
+    } = timer;
+
+    if *current_timer >= stages.len() {
         return false;
     }
 
-    let t = &mut timers[*current_timer];
+    if *paused {
+        return true;
+    }
+
+    let t = &mut stages[*current_timer];
     t.elapsed_s += 1;
 
     if t.period_s - t.elapsed_s == 0 {
@@ -38,13 +58,18 @@ fn update_timers(timers: &mut[Timer], current_timer: &mut usize) -> bool {
 
 fn update_display<B: Backend>(
     terminal: &mut Terminal<B>,
-    timers: &[Timer],
-    current_timer: & usize,
+    timer: &Timer,
     warning_threshold: u32
 ) -> Result<(), io::Error>
 {
     terminal.draw(|f| {
-        let num_chunks: u16 = (timers.len() + (100 % timers.len())).try_into().unwrap();
+        let Timer{
+            stages,
+            current_timer,
+            paused
+        } = timer;
+
+        let num_chunks: u16 = (stages.len() + (100 % stages.len())).try_into().unwrap();
         let chunk_height: u16 = 100 / num_chunks;
         let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -56,7 +81,7 @@ fn update_display<B: Backend>(
         )
         .split(f.size());
 
-        for (i, timer) in timers.iter().enumerate() {
+        for (i, timer) in stages.iter().enumerate() {
             // let style = if i == *current_timer { BOLD_GREEN } else { DIM };
             let timer_completion = 1f64 - (timer.period_s - timer.elapsed_s) as f64 / timer.period_s as f64;
 
@@ -72,19 +97,23 @@ fn update_display<B: Backend>(
                     if i == *current_timer {
                         if warning_threshold > 0 
                         && timer.period_s - timer.elapsed_s <= warning_threshold {
-                            Color::Red
+                            MUSTARD_YELLOW
                         } else {
-                            Color::Green
+                            Color::White
                         }
                     } else {
-                        Color::Rgb(42, 42, 42)
+                        GREY
                     }
                 )
                 // .bg(Color::Black)
                 .add_modifier(Modifier::BOLD)
             )
             .ratio(timer_completion)
-            .label(format!("{}s / {}s", timer.period_s - timer.elapsed_s, timer.period_s));
+            .label(if *paused {
+                "Paused".to_string()
+            } else {
+                format!("{}s / {}s", timer.period_s - timer.elapsed_s, timer.period_s)
+            });
             f.render_widget(progr_bar, chunks[i]);
         }
     })?;
@@ -139,10 +168,10 @@ fn parse_cl_args() -> (Vec<(String, u32)>, u32) {
     (input_names.into_iter().cloned().zip(input_times.into_iter().cloned()).collect(), *input_warn)
 }
 
-fn create_timer_list(names_and_times: &[(String, u32)]) -> Vec<Timer> {
+fn create_timer_list(names_and_times: &[(String, u32)]) -> Vec<TimerStage> {
     names_and_times.iter().map(
         |(name, time)| {
-            Timer {name: name.to_string(), period_s: *time, elapsed_s: 0}
+            TimerStage {name: name.to_string(), period_s: *time, elapsed_s: 0}
         }
     ).collect()
 }
@@ -151,8 +180,11 @@ fn main() -> Result<(), io::Error> {
     // == Data setup ===========================================================
     let (names_and_times, warn) = parse_cl_args();
 
-    let mut current_timer = 0;
-    let mut timers = create_timer_list(&names_and_times);
+    let mut timer = Timer {
+        current_timer: 0,
+        stages: create_timer_list(&names_and_times),
+        paused: false
+    };
 
     // == TUI setup ============================================================
 
@@ -164,7 +196,7 @@ fn main() -> Result<(), io::Error> {
 
     // == Main loop ============================================================
 
-    update_display(&mut terminal, &mut timers, &current_timer, warn)?;
+    update_display(&mut terminal, &timer, warn)?;
 
     let (tick_tx, tick_rx) = channel();
 
@@ -178,13 +210,46 @@ fn main() -> Result<(), io::Error> {
     let mut keep_running = true;
     while keep_running {
         thread::sleep(Duration::from_millis(50));
+
         let _ = tick_rx.try_recv().map(|_| {
-            keep_running = update_timers(&mut timers, &mut current_timer);
-            keep_running = match update_display(&mut terminal, &mut timers, &current_timer, warn) {
+            keep_running = update_state(&mut timer);
+            keep_running = match update_display(
+                &mut terminal,
+                &timer,
+                warn
+            ) {
                 Ok(_) => keep_running,
                 Err(_) => false
             };
         });
+
+        if poll_event(Duration::from_millis(50))? {
+            let event = read_event()?;
+            match event {
+                // EXIT with CTRL+C or ESC
+                InputEvent::Key(KeyEvent{
+                    modifiers,
+                    code
+                }) if code == KeyCode::Esc || (
+                    code == KeyCode::Char('c')
+                    && modifiers == KeyModifiers::CONTROL
+                ) => break,
+
+                // PAUSE timer with SPACE BAR
+                InputEvent::Key(KeyEvent{
+                    modifiers: KeyModifiers::NONE,
+                    code: KeyCode::Char(' ')
+                }) => {
+                    timer.paused = !timer.paused;
+                    update_display(
+                        &mut terminal,
+                        &timer,
+                        warn
+                    )?;
+                },
+                _ => {}
+            }
+        }
     }
 
     // == Restore terminal state ===============================================
