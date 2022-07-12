@@ -22,5 +22,6 @@ jobs:
     - name: Build
       run: cargo build --release --verbose
     - name: Run test timer
+      if: ${{ matrix.os == 'windows-latest' }}
       # check if all the time specifications work: just seconds, zero-padded, all-zero positions, ...
       run: target/release/staged-timer -n Pre-soak -t 61 -n Developer -t 1:01 -n Blix -t 2 -n Wash -t 0:01 -w 0:00:1
