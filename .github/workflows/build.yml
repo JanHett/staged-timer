@@ -20,7 +20,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Build
-      run: cargo build --verbose
+      run: cargo build --release --verbose
     - name: Run test timer
       # check if all the time specifications work: just seconds, zero-padded, all-zero positions, ...
-      run: cargo run -- -n Pre-soak -t 61 -n Developer -t 1:01 -n Blix -t 2 -n Wash -t 0:01 -w 0:00:1
+      run: target/release/staged-timer -n Pre-soak -t 61 -n Developer -t 1:01 -n Blix -t 2 -n Wash -t 0:01 -w 0:00:1
