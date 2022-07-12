@@ -8,13 +8,27 @@ use tui::{
     Terminal
 };
 use crossterm::{
-    event::{read as read_event, poll as poll_event, Event as InputEvent, KeyEvent, KeyModifiers, KeyCode, DisableMouseCapture, EnableMouseCapture},
+    event::{
+        read as read_event,
+        poll as poll_event,
+        Event as InputEvent,
+        KeyEvent,
+        KeyModifiers,
+        KeyCode,
+        DisableMouseCapture,
+        EnableMouseCapture
+    },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{
+        disable_raw_mode,
+        enable_raw_mode,
+        EnterAlternateScreen,
+        LeaveAlternateScreen
+    },
 };
 
 extern crate clap;
-use clap::{Arg, App};
+use clap::{Arg, App, builder::TypedValueParser};
 
 const GREY:Color = Color::Rgb(42, 42, 42);
 const MUSTARD_YELLOW:Color = Color::Rgb(0xff, 0xe5, 0);
@@ -29,6 +43,55 @@ struct Timer {
     stages: Vec<TimerStage>,
     current_timer: usize,
     paused: bool
+}
+
+#[derive(Clone)]
+struct TimeValueParser {}
+
+impl TypedValueParser for TimeValueParser {
+    type Value = u32;
+
+    fn parse_ref(
+        &self,
+        _: &clap::Command,
+        _: Option<&clap::Arg>,
+        value: &std::ffi::OsStr,
+    ) -> Result<Self::Value, clap::Error>
+    {
+        let segments: Vec<&str>;
+        if let Some(time_str) = value.to_str() {
+            segments = time_str.split(":").collect();
+        } else {
+            return Err(clap::Error::raw(
+                clap::ErrorKind::InvalidUtf8,
+                "Could not convert input string to unicode"
+            ));
+        }
+
+        let mut sec = 0;
+        let mut factor = 1;
+        for segm in segments.iter().rev() {
+            // TODO: handle persing error more robustly
+            if let Ok(parsed) = segm.parse::<u32>() {
+                sec += parsed * factor;
+                factor *= 60;
+            } else {
+                return Err(clap::Error::raw(
+                    clap::ErrorKind::InvalidValue,
+                    format!("Could not parse time string {}", segments.join(":"))
+                ));
+            }
+        }
+    
+        Ok(sec)
+    }
+}
+
+fn format_seconds(seconds: u32) -> String {
+    let hrs = seconds / (60 * 60);
+    let min = (seconds % (60 * 60)) / 60;
+    let sec = seconds % 60;
+    format!("{:#02}:{:#02}:{:#02}", hrs, min, sec)
 }
 
 fn update_state(timer: &mut Timer) -> bool {
@@ -83,12 +146,23 @@ fn update_display<B: Backend>(
 
         for (i, timer) in stages.iter().enumerate() {
             // let style = if i == *current_timer { BOLD_GREEN } else { DIM };
-            let timer_completion = 1f64 - (timer.period_s - timer.elapsed_s) as f64 / timer.period_s as f64;
+            let timer_completion = 1f64
+                - (timer.period_s - timer.elapsed_s) as f64
+                / timer.period_s as f64;
 
             let progr_bar = Gauge::default()
             .block(
                 Block::default()
-                .title(timer.name.to_string())
+                .title(if *paused {
+                    format!("{}: Paused", timer.name.to_string())
+                } else {
+                    format!(
+                        "{}: {} / {}",
+                        timer.name.to_string(),
+                        format_seconds(timer.period_s - timer.elapsed_s),
+                        format_seconds(timer.period_s)
+                    )
+                })
                 .borders(Borders::NONE)
             )
             .gauge_style(
@@ -109,11 +183,7 @@ fn update_display<B: Backend>(
                 .add_modifier(Modifier::BOLD)
             )
             .ratio(timer_completion)
-            .label(if *paused {
-                "Paused".to_string()
-            } else {
-                format!("{}s / {}s", timer.period_s - timer.elapsed_s, timer.period_s)
-            });
+            .label("");
             f.render_widget(progr_bar, chunks[i]);
         }
     })?;
@@ -125,9 +195,11 @@ fn parse_cl_args() -> (Vec<(String, u32)>, u32) {
     let arg_match = App::new("Staged Timer")
         .version("0.1.0")
         .author("Jan Hettenkofer")
-        .about("Configurable multi-stage timer for film development or workouts")
+        .about(
+            "Configurable multi-stage timer for film development or workouts"
+        )
         .arg(Arg::with_name("name")
-            .help("Name of the timer stage")
+            .help("Name of the timer stage.")
             .long("name")
             .short('n')
             .value_name("TIMER_NAME")
@@ -136,22 +208,25 @@ fn parse_cl_args() -> (Vec<(String, u32)>, u32) {
             .required(true)
         )
         .arg(Arg::with_name("time")
-            .help("Duration of the timer stage")
+            .help(
+                "Duration of the timer stage. Specify in seconds or \
+                [[hrs:]min:]sec, e.g. 1:32:14.")
             .long("time")
             .short('t')
             .value_name("TIME")
             .takes_value(true)
-            .value_parser(clap::value_parser!(u32))
+            .value_parser(TimeValueParser{})
             .action(clap::ArgAction::Append)
             .required(true)
         )
         .arg(Arg::with_name("warn")
-            .help("Highlight the countdown bar at N remaining seconds")
+            .help("Highlight the countdown bar when <REMAINING_TIME> is left \
+            on the timer")
             .long("warn")
             .short('w')
-            .value_name("N")
+            .value_name("REMAINING_TIME")
             .takes_value(true)
-            .value_parser(clap::value_parser!(u32))
+            .value_parser(TimeValueParser{})
             .default_value("0")
         )
         .get_matches();
@@ -161,7 +236,11 @@ fn parse_cl_args() -> (Vec<(String, u32)>, u32) {
     let input_warn = arg_match.get_one::<u32>("warn").unwrap();
 
     if input_times.len() != input_names.len() {
-        println!("Cannot match unequal number of timers and names.");
+        println!(
+            "Cannot match timer stage names with their durations. \
+            {} names and {} durations were provided.",
+            input_names.len(), input_times.len()
+        );
         std::process::exit(1);
     }
 
